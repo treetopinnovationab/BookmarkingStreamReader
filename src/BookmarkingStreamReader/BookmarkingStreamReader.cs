@@ -152,6 +152,10 @@ namespace Bookmarking {
                 throw new ArgumentOutOfRangeException(nameof(bufferSize), SR.ArgumentOutOfRange_NeedPosNum);
             }
 
+            if (!BookmarkingStreamReaderCommon.SupportsReading(encoding)) {
+                throw new ArgumentOutOfRangeException(nameof(encoding), $"The encoding {encoding.WebName} is not supported");
+            }
+
             Init(stream, encoding, detectEncodingFromByteOrderMarks, bufferSize, leaveOpen);
         }
 

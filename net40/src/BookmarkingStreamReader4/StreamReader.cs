@@ -175,6 +175,9 @@ namespace Bookmarking {
                 throw new ArgumentException(SR.Argument_StreamNotReadable);
             if (bufferSize <= 0)
                 throw new ArgumentOutOfRangeException("bufferSize", SR.ArgumentOutOfRange_NeedPosNum);
+            if (!BookmarkingStreamReaderCommon.SupportsReading(encoding)) {
+                throw new ArgumentOutOfRangeException(nameof(encoding), $"The encoding {encoding.WebName} is not supported");
+            }
             Contract.EndContractBlock();
 
             Init(stream, encoding, detectEncodingFromByteOrderMarks, bufferSize, leaveOpen);

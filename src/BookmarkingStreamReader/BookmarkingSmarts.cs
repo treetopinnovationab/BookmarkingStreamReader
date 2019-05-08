@@ -80,12 +80,18 @@ namespace Bookmarking {
             if (encoding.IsSingleByte) {
                 _singleByteCharsInCurrentBuffer = true;
                 _byteAdvancementInfo = null;
-            } else if (encoding is UTF8Encoding en) {
-                if (_byteAdvancer == null || _byteAdvancer.LastUsedEncoding != en) {
+            } else if (encoding is UTF8Encoding u8) {
+                if (_byteAdvancer == null || _byteAdvancer.LastUsedEncoding != u8) {
                     _byteAdvancer = new UTF8ByteAdvancer();
                 }
                 _singleByteCharsInCurrentBuffer = false;
-                _byteAdvancementInfo = _byteAdvancer.BuildByteAdvancementInfo(bytes, byteCount, _bytePositionStartOfCurrentBuffer, chars, charCount, _charPositionStartOfCurrentBuffer, en, _debugAction);
+                _byteAdvancementInfo = _byteAdvancer.BuildByteAdvancementInfo(bytes, byteCount, _bytePositionStartOfCurrentBuffer, chars, charCount, _charPositionStartOfCurrentBuffer, u8, _debugAction);
+            } else if (encoding is UnicodeEncoding u16) {
+                if (_byteAdvancer == null || _byteAdvancer.LastUsedEncoding != u16) {
+                    _byteAdvancer = new UTF16ByteAdvancer();
+                }
+                _singleByteCharsInCurrentBuffer = false;
+                _byteAdvancementInfo = _byteAdvancer.BuildByteAdvancementInfo(bytes, byteCount, _bytePositionStartOfCurrentBuffer, chars, charCount, _charPositionStartOfCurrentBuffer, u16, _debugAction);
             }
         }
 
@@ -227,21 +233,21 @@ namespace Bookmarking {
                 var utf16CharIndex = 0;
                 var unicodeScalarIndex = 0;
 
-                const byte isASCIIMask = 0b1_0000000;
-                const byte isASCIIAfterMaskShouldBe = 0b0_0000000;
-                const byte isContinuationByteMask = 0b11_000000;
-                const byte isContinuationByteAfterMaskShouldBe = 0b10_000000;
-                const byte isDoubleByteFirstByteMask = 0b111_00000;
-                const byte isDoubleByteFirstByteAfterMaskShouldBe = 0b110_00000;
-                const byte isTripleByteFirstByteMask = 0b1111_0000;
-                const byte isTripleByteFirstByteAfterMaskShouldBe = 0b1110_0000;
-                const byte isQuadrupleByteFirstByteMask = 0b11111_000;
+                const byte isASCIIMask                               = 0b1_0000000;
+                const byte isASCIIAfterMaskShouldBe                  = 0b0_0000000;
+                const byte isContinuationByteMask                    = 0b11_000000;
+                const byte isContinuationByteAfterMaskShouldBe       = 0b10_000000;
+                const byte isDoubleByteFirstByteMask                 = 0b111_00000;
+                const byte isDoubleByteFirstByteAfterMaskShouldBe    = 0b110_00000;
+                const byte isTripleByteFirstByteMask                 = 0b1111_0000;
+                const byte isTripleByteFirstByteAfterMaskShouldBe    = 0b1110_0000;
+                const byte isQuadrupleByteFirstByteMask              = 0b11111_000;
                 const byte isQuadrupleByteFirstByteAfterMaskShouldBe = 0b11110_000;
 
                 const byte continuationByteDataMask = 0b00_111111;
-                const byte doubleByteDataMask = 0b000_11111;
-                const byte tripleByteDataMask = 0b0000_1111;
-                const byte quadrupleByteDataMask = 0b00000_111;
+                const byte doubleByteDataMask       = 0b000_11111;
+                const byte tripleByteDataMask       = 0b0000_1111;
+                const byte quadrupleByteDataMask    = 0b00000_111;
 
 
                 const int possibleExtraBytes = 4;
@@ -352,8 +358,6 @@ namespace Bookmarking {
                 }
 
                 var extraOffset = byteCount;
-
-
                 var extraIncompleteCharWithByteCount = 0;
 
                 if (_currentCharByteRun != notSet && _expectedCharByteRun != notSet &&
@@ -361,21 +365,108 @@ namespace Bookmarking {
                     extraIncompleteCharWithByteCount = _currentCharByteRun;
                 }
 
-
-                //if (_expectedCharByteRun > _currentCharByteRun) {
-                //    var remainingBytes = (_expectedCharByteRun - _currentCharByteRun);
-                //    for (int i = 0; i < remainingBytes; i++) {
-                //        charIndexesAtByteIndex[extraOffset] = utf16CharIndex;
-                //        extraOffset++;
-                //    }
-                //}
-
-                //utf16CharIndex++;
-                //charIndexesAtByteIndex[extraOffset++] = utf16CharIndex;
-
                 Array.Resize(ref charIndexesAtByteIndex, extraOffset);
 
                 Array.Resize(ref charByteAdvancements, utf16CharIndex);
+
+                var byteIndex = 0;
+                foreach (var charIndexAtByteIndex in charIndexesAtByteIndex) {
+                    logger?.Invoke($"byte at index {byteIndex} corresponds to char index {charIndexAtByteIndex} (abs byte: {(byteIndex + byteOffset)}, char {(charIndexAtByteIndex + charOffset)})");
+                    byteIndex++;
+                }
+
+                return new ByteAdvancementInfo(charIndexesAtByteIndex, firstCharExtendsBackByteCount, extraIncompleteCharWithByteCount);
+            }
+        }
+
+        class UTF16ByteAdvancer : IByteAdvancer {
+            public void ResetState() {
+                _firstByte = null;
+                _previousSurrogateChar = null;
+            }
+
+            public Encoding LastUsedEncoding { get; private set; }
+
+
+            /*
+                To encode U+10437 (𐐷) to UTF-16:
+
+            Subtract 0x10000 from the code point, leaving 0x0437.
+            For the high surrogate, shift right by 10 (divide by 0x400), then add 0xD800, resulting in 0x0001 + 0xD800 = 0xD801.
+            For the low surrogate, take the low 10 bits (remainder of dividing by 0x400), then add 0xDC00, resulting in 0x0037 + 0xDC00 = 0xDC37.
+            
+                To decode U+10437 (𐐷) from UTF-16:
+
+            Take the high surrogate (0xD801) and subtract 0xD800, then multiply by 0x400, resulting in 0x0001 × 0x400 = 0x0400.
+            Take the low surrogate (0xDC37) and subtract 0xDC00, resulting in 0x37.
+            Add these two results together (0x0437), and finally add 0x10000 to get the final decoded UTF-32 code point, 0x10437.
+
+             */
+
+            private const int _utf16BigEndianCodePage = 1201;
+            private const int _utf16LittleEndianCodePage = 1200;
+
+            private byte? _firstByte = null;
+            private char? _previousSurrogateChar = null;
+
+            public ByteAdvancementInfo BuildByteAdvancementInfo(byte[] bytes, int byteCount, long byteOffset, char[] chars, int charCount, long charOffset, Encoding en,
+                Action<string> logger) {
+
+                LastUsedEncoding = en;
+
+                var isBigEndian = (en.CodePage == _utf16BigEndianCodePage);
+
+                var utf16CharIndex = 0;
+                var unicodeScalarIndex = 0;
+
+                const int lowSurrogateStarts  = 0xD800;
+                const int lowSurrogateEnds    = 0xDBFF;
+                const int highSurrogateStarts = 0xDC00;
+                const int highSurrogateEnds   = 0xDFFF;
+
+                var charIndexesAtByteIndex = new int[byteCount];
+
+                var firstCharExtendsBackByteCount = (_firstByte == null) ? 0 : 1;
+
+                //if (_currentCharByteRun != notSet && _expectedCharByteRun != notSet &&
+                //    _expectedCharByteRun > _currentCharByteRun) {
+                //    firstCharExtendsBackByteCount = _currentCharByteRun;
+                //}
+
+                for (int i = 0; i < byteCount; i++) {
+                    var b = bytes[i];
+
+                    charIndexesAtByteIndex[i] = utf16CharIndex;
+
+                    if (_firstByte == null) {
+                        _firstByte = b;
+                    } else {
+                        var lower = (isBigEndian) ? _firstByte.Value : b;
+                        var upper = (isBigEndian) ? b : _firstByte.Value;
+                        var utf16Char = (char)((upper << 8) + lower);
+
+                        _firstByte = null;
+
+                        if (_previousSurrogateChar != null) {
+                            var previousSurrogateChar = _previousSurrogateChar;
+
+                            // ..
+                            unicodeScalarIndex++;
+
+                            _previousSurrogateChar = null;
+                        } else {
+                            _previousSurrogateChar = utf16Char;
+                        }
+
+                        utf16CharIndex++;
+                    }
+                }
+
+                var extraOffset = byteCount;
+
+                var extraIncompleteCharWithByteCount = (_firstByte == null) ? 0 : 1;
+
+                Array.Resize(ref charIndexesAtByteIndex, extraOffset);
 
                 var byteIndex = 0;
                 foreach (var charIndexAtByteIndex in charIndexesAtByteIndex) {
@@ -427,6 +518,20 @@ namespace Bookmarking {
         }
     }
 
+    internal static class BookmarkingStreamReaderCommon {
+        public static bool SupportsReading(Encoding knownEncoding) {
+            if (knownEncoding.IsSingleByte) {
+                return true;
+            }
+            if (knownEncoding.WebName == Encoding.UTF8.WebName) {
+                return true;
+            }
+            if (knownEncoding.WebName.StartsWith("utf-16")) {
+                return true;
+            }
+            return false;
+        }
+    }
 
     public enum BookmarkingLineEnding : byte {
         None,

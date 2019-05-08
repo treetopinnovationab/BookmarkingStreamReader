@@ -59,13 +59,32 @@ namespace Bookmarking.Test {
             }
         }
 
-        private static readonly byte[] _byteOrderMark = new byte[] { 0xEF, 0xBB, 0xBF };
+        private static readonly byte[] _utf8ByteOrderMark = new byte[] { 0xEF, 0xBB, 0xBF };
+        private static readonly byte[] _utf16BigEndianByteOrderMark = new byte[] { 0xFE, 0xFF };
+        private static readonly byte[] _utf16LittleEndianByteOrderMark = new byte[] { 0xFF, 0xFE };
         private static readonly byte _newline = 0x0A;
 
         private static readonly UTF8Encoding _u8NoBOM = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
+        private static readonly UnicodeEncoding _u16BigEndianBOM = new UnicodeEncoding(bigEndian:true, byteOrderMark:true);
+        private static readonly UnicodeEncoding _u16BigEndianNoBOM = new UnicodeEncoding(bigEndian:true, byteOrderMark:false);
+        private static readonly UnicodeEncoding _u16LittleEndianBOM = new UnicodeEncoding(bigEndian:false, byteOrderMark:true);
+        private static readonly UnicodeEncoding _u16LittleEndianNoBOM = new UnicodeEncoding(bigEndian:false, byteOrderMark:false);
+
         private static byte[] UTF8(string str) {
             return _u8NoBOM.GetBytes(str);
+        }
+        private static byte[] UTF16BigEndianBOM(string str) {
+            return _u16BigEndianBOM.GetBytes(str);
+        }
+        private static byte[] UTF16BigEndianNoBOM(string str) {
+            return _u16BigEndianNoBOM.GetBytes(str);
+        }
+        private static byte[] UTF16LittleEndianBOM(string str) {
+            return _u16LittleEndianBOM.GetBytes(str);
+        }
+        private static byte[] UTF16LittleEndianNoBOM(string str) {
+            return _u16LittleEndianNoBOM.GetBytes(str);
         }
 
         /// <summary>
@@ -129,12 +148,76 @@ namespace Bookmarking.Test {
         }
 
         /// <summary>
+        /// UTF-16 test
+        /// </summary>
+        [Fact]
+        public void HandleUTF16Correctly() {
+            var testInput = "XYZABC123";
+
+            {
+                var bomThenZ = new BytesBuilder {_utf16BigEndianByteOrderMark, UTF16BigEndianNoBOM(testInput + "\n")}
+                    .ToArray();
+
+                var memoryStream = new MemoryStream(bomThenZ);
+
+                var bookm = new BookmarkingStreamReader(memoryStream, _u16BigEndianBOM);
+                var lineMaybe = bookm.ReadDetailedLine();
+                var line = lineMaybe.Value;
+                Assert.Equal(expected: testInput, actual: line.TextWithoutLineEnding);
+                Assert.Equal(expected: BookmarkingLineEnding.LineFeed, actual: line.BookmarkingLineEnding);
+                var readNextBookmark = line.MakeBookmarkForReadingNextLine();
+                Assert.Equal(expected: (testInput.Length), actual: readNextBookmark.CharIndex);
+                Assert.Equal(expected: ((testInput.Length) * 2) + 1, actual: readNextBookmark.Position);
+                var rereadBookmark = line.MakeBookmarkForReReadingLine();
+                Assert.Equal(expected: -1, actual: rereadBookmark.CharIndex);
+            }
+
+            {
+                var bomThenZ = new BytesBuilder {_utf16LittleEndianByteOrderMark, UTF16LittleEndianNoBOM(testInput + "\n")}
+                    .ToArray();
+
+                var memoryStream = new MemoryStream(bomThenZ);
+
+                var bookm = new BookmarkingStreamReader(memoryStream, _u16LittleEndianBOM);
+                var lineMaybe = bookm.ReadDetailedLine();
+                var line = lineMaybe.Value;
+                Assert.Equal(expected: testInput, actual: line.TextWithoutLineEnding);
+                Assert.Equal(expected: BookmarkingLineEnding.LineFeed, actual: line.BookmarkingLineEnding);
+                var readNextBookmark = line.MakeBookmarkForReadingNextLine();
+                Assert.Equal(expected: (testInput.Length), actual: readNextBookmark.CharIndex);
+                Assert.Equal(expected: ((testInput.Length)*2)+1, actual: readNextBookmark.Position);
+                var rereadBookmark = line.MakeBookmarkForReReadingLine();
+                Assert.Equal(expected: -1, actual: rereadBookmark.CharIndex);
+            }
+
+            {
+                var longTestInput = string.Join("", Enumerable.Repeat(testInput, 128));
+
+                var bomThenZ = new BytesBuilder {_utf16LittleEndianByteOrderMark, UTF16LittleEndianNoBOM(longTestInput + "\n")}
+                    .ToArray();
+
+                var memoryStream = new MemoryStream(bomThenZ);
+
+                var bookm = new BookmarkingStreamReader(memoryStream, _u16LittleEndianBOM, false, bufferSize:129);
+                var lineMaybe = bookm.ReadDetailedLine();
+                var line = lineMaybe.Value;
+                Assert.Equal(expected: longTestInput, actual: line.TextWithoutLineEnding);
+                Assert.Equal(expected: BookmarkingLineEnding.LineFeed, actual: line.BookmarkingLineEnding);
+                var readNextBookmark = line.MakeBookmarkForReadingNextLine();
+                Assert.Equal(expected: (longTestInput.Length), actual: readNextBookmark.CharIndex);
+                Assert.Equal(expected: ((longTestInput.Length)*2)+1, actual: readNextBookmark.Position);
+                var rereadBookmark = line.MakeBookmarkForReReadingLine();
+                Assert.Equal(expected: -1, actual: rereadBookmark.CharIndex);
+            }
+        }
+
+        /// <summary>
         /// Check that the Byte Order Mark does not affect the character index.
         /// </summary>
         [Fact]
         public void HandleBOMCorrectlyWithNewline() {
             var testChar = "Z";
-            var bomThenZ = new BytesBuilder { _byteOrderMark, UTF8(testChar), _newline }.ToArray();
+            var bomThenZ = new BytesBuilder { _utf8ByteOrderMark, UTF8(testChar), _newline }.ToArray();
 
             var memoryStream = new MemoryStream(bomThenZ);
 
@@ -156,7 +239,7 @@ namespace Bookmarking.Test {
         [Fact]
         public void HandleBOMCorrectlyWithoutNewline() {
             var testChar = "Z";
-            var bomThenZ = new BytesBuilder { _byteOrderMark, UTF8(testChar) }.ToArray();
+            var bomThenZ = new BytesBuilder { _utf8ByteOrderMark, UTF8(testChar) }.ToArray();
 
             var memoryStream = new MemoryStream(bomThenZ);
 
